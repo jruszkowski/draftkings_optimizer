@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+.idea/
+*.pyc
+*.pyo
+*.pyd
+*.csv
+local_settings.py
