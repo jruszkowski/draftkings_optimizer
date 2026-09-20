@@ -8,10 +8,12 @@ import json
 import math
 import requests
 import pandas as pd
+from pathlib import Path
 from datetime import date
 
 SEASON = 2026
 PAGE_SIZE = 300  # players per API page
+RESULTS_DIR = Path("results")
 
 # ESPN position ID -> label
 POSITION_MAP = {
@@ -199,7 +201,7 @@ def fetch_espn_projections(scoring_period: int) -> list[dict]:
 def download_projections(scoring_period: int | None = None) -> pd.DataFrame:
     """
     Download ESPN projections for the given week (defaults to current week).
-    Saves to espn_projections.csv and returns a DataFrame.
+    Saves to results/espn_projections.csv and returns a DataFrame.
     """
     if scoring_period is None:
         scoring_period = get_current_nfl_week()
@@ -212,7 +214,8 @@ def download_projections(scoring_period: int | None = None) -> pd.DataFrame:
         return pd.DataFrame()
 
     df = pd.DataFrame(rows)
-    out_file = "espn_projections.csv"
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    out_file = RESULTS_DIR / "espn_projections.csv"
     df.to_csv(out_file, index=False)
     print(f"Saved {len(df)} player projections to {out_file}")
     print(df[["name", "position", "team", "projected_points"]].head(20).to_string(index=False))

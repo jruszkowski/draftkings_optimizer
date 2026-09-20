@@ -217,7 +217,11 @@ EXCLUDED_PLAYERS = [
 ]
 
 
-def optimize_lineup(dk_df: pd.DataFrame, score_col: str = "projected_points") -> pd.DataFrame | None:
+def optimize_lineup(
+    dk_df: pd.DataFrame,
+    score_col: str = "projected_points",
+    min_qb_stack: int = 0,
+) -> pd.DataFrame | None:
     """
     Find the optimal DraftKings NFL lineup using integer linear programming.
 
@@ -225,6 +229,7 @@ def optimize_lineup(dk_df: pd.DataFrame, score_col: str = "projected_points") ->
     Salary cap: $50,000.
     score_col: column used as the optimisation objective
                ("projected_points" or "AvgPointsPerGame").
+    min_qb_stack: minimum number of same-team WR/TE stacked with the QB.
     Players listed in EXCLUDED_PLAYERS are removed before solving.
 
     Returns a 9-row DataFrame of the selected lineup, or None if infeasible.
@@ -232,6 +237,8 @@ def optimize_lineup(dk_df: pd.DataFrame, score_col: str = "projected_points") ->
     if score_col not in dk_df.columns:
         raise ValueError(f"Score column '{score_col}' not found in DataFrame.")
     print(f"Optimizing using: {score_col}")
+    if min_qb_stack > 0:
+        print(f"Applying QB stack constraint: at least {min_qb_stack} same-team WR/TE")
 
     pool = dk_df.copy()
     pool["Salary"] = pd.to_numeric(pool["Salary"], errors="coerce")
@@ -286,6 +293,28 @@ def optimize_lineup(dk_df: pd.DataFrame, score_col: str = "projected_points") ->
     prob += pulp.lpSum(x[i] for i in players if pool.loc[i, "Position"] == "TE") <= 2
     # DST: exactly 1
     prob += pulp.lpSum(x[i] for i in players if pool.loc[i, "Position"] == "DST") == 1
+
+    # Optional QB stack rule: require at least N same-team WR/TE with selected QB.
+    if min_qb_stack > 0:
+        teams = sorted(pool["TeamAbbrev"].dropna().astype(str).str.upper().unique().tolist())
+        team_qb_vars = {t: pulp.LpVariable(f"team_qb_{t}", cat="Binary") for t in teams}
+
+        for team in teams:
+            qb_on_team = [i for i in players if pool.loc[i, "Position"] == "QB" and str(pool.loc[i, "TeamAbbrev"]).upper() == team]
+            if qb_on_team:
+                prob += team_qb_vars[team] == pulp.lpSum(x[i] for i in qb_on_team)
+            else:
+                prob += team_qb_vars[team] == 0
+
+            pass_catchers_on_team = [
+                i for i in players
+                if str(pool.loc[i, "TeamAbbrev"]).upper() == team
+                and pool.loc[i, "Position"] in ("WR", "TE")
+            ]
+            prob += (
+                pulp.lpSum(x[i] for i in pass_catchers_on_team)
+                >= min_qb_stack * team_qb_vars[team]
+            )
 
     prob.solve(pulp.PULP_CBC_CMD(msg=0))
 
@@ -345,6 +374,12 @@ def main():
         action="store_true",
         help="Optimize using AvgPointsPerGame instead of ESPN projected_points",
     )
+    parser.add_argument(
+        "--min-qb-stack",
+        type=int,
+        default=0,
+        help="Minimum same-team WR/TE required with selected QB (e.g. 2 for 2+ stacks)",
+    )
     args = parser.parse_args()
     score_col = "AvgPointsPerGame" if args.use_avg else "projected_points"
 
@@ -359,7 +394,7 @@ def main():
         else:
             dk_df['projected_points'] = random_integers_basic(len(dk_df), 0, 25)
 
-    lineup = optimize_lineup(dk_df, score_col=score_col)
+    lineup = optimize_lineup(dk_df, score_col=score_col, min_qb_stack=max(args.min_qb_stack, 0))
     return lineup
 
 
